@@ -3,7 +3,7 @@ from scapy.layers.l2 import Dot3
 import time
 
 
-def createLLDPFrame(deviceNAme, portID="1", ttl=120):
+def createLLDPFrame(deviceName, portID="1", ttl=120):
     """constructs an LLDP frame with essential TLVs(type-length-value) for chassis ID, Port ID and TTL."""
     chassis_id_tlv = b"\x02\x07\x04" + bytes(deviceName, "utf-8")
     port_id_tlv = b"\x04\x05" + bytes(portId, "utf-8")
@@ -18,7 +18,7 @@ def createLLDPFrame(deviceNAme, portID="1", ttl=120):
     return lldp_frame
 
 
-def sendLLDPFrame(deviceNAme, portID="1", interval=30):
+def sendLLDPFrame(deviceName, portID="1", interval=30):
     """Sends an LLDPFrame at a default 30 second interval"""
     while True:
         lldp_frame = createLLDPFrame(deviceName, portID)
