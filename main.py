@@ -1,4 +1,4 @@
-from scapy.all import sendp, Ether, sniff, get_if_list, conf
+from scapy.all import Ether, Raw
 import time
 import importlib
 import threading
@@ -13,23 +13,15 @@ logging.basicConfig(
 logger = logging.getLogger('NetworkEmulator')
 
 class NetworkEmulator:
-    def __init__(self, interface: Optional[str] = None):
+    def __init__(self):
         self.traffic_log: List[Tuple] = []
         self.devices: Dict = {}
         self.connections: Dict[str, List[str]] = {}
         self.running: bool = True
-        self.interface = interface or self._get_default_interface()
         self._threads: List[threading.Thread] = []
-        
-    def _get_default_interface(self) -> str:
-        """Get the first available interface or raise an error."""
-        interfaces = get_if_list()
-        if not interfaces:
-            raise RuntimeError("No network interfaces found")
-        return interfaces[0]
 
     def add_device(self, device_name: str, protocol: str = "LLDP", 
-                  port_id: str = "1", paths: int = 1) -> None:
+                   port_id: str = "1", paths: int = 1) -> None:
         """Add a new device with specified protocol and redundant paths."""
         if device_name in self.devices:
             logger.warning(f"Device {device_name} already exists. Updating configuration.")
@@ -73,57 +65,37 @@ class NetworkEmulator:
             try:
                 for path in range(device_info['paths']):
                     frame = create_frame_func(device_name, device_info['port_id'])
-                    self.log_frame(frame, "outgoing", device_name, path)
-                    
-                    # Send frame with error handling
-                    try:
-                        sendp(frame, iface=self.interface, verbose=False)
-                        logger.debug(f"Frame sent from {device_name} on path {path}")
-                    except Exception as e:
-                        logger.error(f"Failed to send frame: {e}")
-                        continue
+                    if frame:
+                        logger.info(f"[{device_name}] Sent frame on path {path + 1}")
 
-                    # Emulate reception for connected devices
-                    for connected_device in self.connections[device_name]:
-                        self.emulate_incoming_frame(frame, connected_device, path)
+                        # Log sending frame to connected devices
+                        for connected_device in self.connections[device_name]:
+                            self.log_frame(frame, "sent", device_name, connected_device)
+                            self.emulate_incoming_frame(frame, connected_device, device_name)
                         
                 time.sleep(interval)
             except Exception as e:
                 logger.error(f"Error in send_frame loop for {device_name}: {e}")
                 time.sleep(1)  # Prevent rapid error loops
 
-    def sniff_frames(self) -> None:
-        """Sniff frames on the specified interface."""
-        def process_packet(packet):
-            if not self.running:
-                return
-            
-            if Ether in packet:
-                src_mac = packet[Ether].src
-                for device_name, device_info in self.devices.items():
-                    if device_info['active']:
-                        self.log_frame(packet, "incoming", device_name, 0)
-                        logger.debug(f"Captured frame from {src_mac}")
+    def emulate_incoming_frame(self, frame, receiving_device, sending_device):
+        """Simulate receiving a frame for a specified device."""
+        if receiving_device in self.devices and self.devices[receiving_device]['active']:
+            self.log_frame(frame, "received", receiving_device, sending_device)
+            logger.info(f"[{receiving_device}] Received frame from {sending_device}")
 
-        try:
-            logger.info(f"Starting packet capture on interface {self.interface}")
-            sniff(
-                iface=self.interface,
-                prn=process_packet,
-                store=0,
-                stop_filter=lambda _: not self.running
-            )
-        except Exception as e:
-            logger.error(f"Sniffing error: {e}")
+    def log_frame(self, frame, direction: str, device_name: str, peer_device: str) -> None:
+        """Log frame details with timestamps."""
+        timestamp = time.time()
+        self.traffic_log.append((timestamp, direction, device_name, peer_device, frame))
+        logger.debug(
+            f"{direction.upper()} Frame at {timestamp:.3f} from {device_name} "
+            f"to {peer_device}: {frame.summary()}"
+        )
 
     def start(self) -> None:
         """Start the emulator with all configured devices."""
         self.running = True
-        
-        # Start sniffing thread
-        sniff_thread = threading.Thread(target=self.sniff_frames, daemon=True)
-        sniff_thread.start()
-        self._threads.append(sniff_thread)
         
         # Start sender threads for each device
         for device_name in self.devices:
@@ -144,19 +116,10 @@ class NetworkEmulator:
         self._threads.clear()
         logger.info("Emulator stopped")
 
-    def log_frame(self, frame, direction: str, device_name: str, path: int) -> None:
-        """Log frame details with timestamps."""
-        timestamp = time.time()
-        self.traffic_log.append((timestamp, direction, device_name, path, frame))
-        logger.debug(
-            f"{direction.upper()} Frame at {timestamp:.3f} from {device_name} "
-            f"on path {path}: {frame.summary()}"
-        )
-
 if __name__ == "__main__":
     # Example usage
     try:
-        # Initialize emulator with specific interface
+        # Initialize emulator
         emulator = NetworkEmulator()
         
         # Add devices
